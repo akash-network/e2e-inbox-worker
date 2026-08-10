@@ -23,6 +23,9 @@
   "dependencies": {
     "postal-mime": "^2.4.3"
   },
+  "overrides": {
+    "undici": "7.29.0"
+  },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.20.1",
     "@cloudflare/workers-types": "^5.20260730.1",
