@@ -11,8 +11,7 @@
     {
       "binding": "DB",
       "database_name": "console-e2e-inbox",
-      // Replace with the id printed by `wrangler d1 create console-e2e-inbox` (any value works for local dev).
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "d8a573b7-ad7f-4cf8-baa3-d17c0ea79fda"
     }
   ]
 }
