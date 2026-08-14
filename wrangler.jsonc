@@ -3,6 +3,12 @@
   "name": "console-e2e-inbox",
   "main": "src/index.ts",
   "compatibility_date": "2025-12-01",
+  "observability": {
+    // Mail arrives unattended, so a failed email() invocation leaves no trace unless logs are persisted.
+    // Traffic is a handful of invocations per e2e run plus the hourly cron, so keep sampling at 100%.
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   "triggers": {
     // Purge messages past the 24h TTL even when no new mail arrives to trigger the insert-path cleanup.
     "crons": ["0 * * * *"]
