@@ -14,8 +14,18 @@ Authorization: Bearer <INBOX_API_TOKEN>
 Returns messages for the recipient, newest first:
 
 ```json
-[{ "id": "…", "receivedMs": 1754000000000, "subject": "…", "text": "…" }]
+[
+  {
+    "id": "…",
+    "receivedMs": 1754000000000,
+    "subject": "…",
+    "text": "…",
+    "links": [{ "text": "Delete my account", "href": "https://…" }]
+  }
+]
 ```
+
+`text` is the plain-text part, or the HTML part flattened to text when there is none, so it carries no link targets. `links` lists every `<a href>` of the HTML part in document order, with its label as plain text, so tests can open an emailed link such as a confirmation button. Messages stored before links were kept have an empty list.
 
 Any other path/method returns 404; a missing or wrong token returns 401. Messages older than 24h are excluded from reads, and are deleted on each incoming email and by an hourly scheduled cron so nothing lingers if delivery stops.
 
@@ -32,7 +42,7 @@ Prerequisites: access to the Akash Cloudflare account and a **dedicated domain**
    npm install
    npx wrangler d1 create console-e2e-inbox
    ```
-   Copy the printed `database_id` into `wrangler.jsonc`, then apply the schema:
+   Copy the printed `database_id` into `wrangler.jsonc`, then apply the migrations in `migrations/`:
    ```bash
    npm run db:apply
    ```
@@ -88,7 +98,9 @@ curl -H "Authorization: Bearer local-token" 'http://localhost:8787/messages/prob
 
 ## CI and deploys
 
-Every pull request runs typechecking and the Vitest suite (`.github/workflows/ci.yml`). Merges to `main` deploy the Worker automatically via `wrangler deploy` (`.github/workflows/deploy.yml`) using the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repo secrets. `npm run deploy` remains available for a manual deploy with your own Cloudflare auth.
+Every pull request runs typechecking and the Vitest suite (`.github/workflows/ci.yml`). Merges to `main` apply any pending D1 migrations and then deploy the Worker via `wrangler deploy` (`.github/workflows/deploy.yml`), using the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repo secrets. `npm run deploy` remains available for a manual deploy with your own Cloudflare auth.
+
+Schema changes go in a new numbered file under `migrations/`, applied by the deploy before the Worker that needs them goes live. Never edit a migration that has already run.
 
 ## Consumers
 
