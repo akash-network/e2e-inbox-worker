@@ -1,9 +1,8 @@
-import { env } from "cloudflare:test";
+import { applyD1Migrations, env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { mock } from "vitest-mock-extended";
 
-import schema from "../schema.sql?raw";
-import worker from "./index";
+import worker, { type EmailLink } from "./index";
 
 const HOUR_MS = 60 * 60 * 1_000;
 
@@ -50,6 +49,75 @@ describe("console-e2e-inbox worker", () => {
       expect(messages[0].text).toBe("Your verification code is: 654321");
     });
 
+    it("keeps each link of the html part with its label next to the text part", async () => {
+      const { deliverEmail, getMessages } = await setup();
+
+      await deliverEmail({
+        to: "links@example.com",
+        mime: multipartAlternativeEmail(
+          "links@example.com",
+          "Open the link in this email to delete your account.",
+          [
+            '<a href="https://console.test/user/confirm-delete#token=abc&amp;lang=en" class="btn">Delete <span>my</span> account</a>',
+            "<a href='https://help.test/?topic=1&#38;page=2'>Help&nbsp;center</a>"
+          ].join("")
+        )
+      });
+
+      const [message] = await (await getMessages("links@example.com")).json<Array<{ text: string; links: EmailLink[] }>>();
+      expect(message.text).toContain("Open the link in this email to delete your account.");
+      expect(message.links).toEqual([
+        { text: "Delete my account", href: "https://console.test/user/confirm-delete#token=abc&lang=en" },
+        { text: "Help center", href: "https://help.test/?topic=1&page=2" }
+      ]);
+    });
+
+    it("reads the href attribute alone, quoted or not, and skips anchors without one", async () => {
+      const { deliverEmail, getMessages } = await setup();
+
+      await deliverEmail({
+        to: "anchors@example.com",
+        mime: htmlEmail(
+          "anchors@example.com",
+          [
+            '<a name="top">Top</a>',
+            '<a data-href="https://wrong.test" href="https://right.test">Right</a>',
+            '<a title="a > b" href=https://bare.test/path>Bare</a>'
+          ].join("")
+        )
+      });
+
+      const [message] = await (await getMessages("anchors@example.com")).json<Array<{ links: EmailLink[] }>>();
+      expect(message.links).toEqual([
+        { text: "Right", href: "https://right.test" },
+        { text: "Bare", href: "https://bare.test/path" }
+      ]);
+    });
+
+    it("decodes numeric entities in links and leaves unknown or out-of-range ones as written", async () => {
+      const { deliverEmail, getMessages } = await setup();
+
+      await deliverEmail({
+        to: "entities@example.com",
+        mime: htmlEmail("entities@example.com", '<a href="https://entities.test/?q=&#x41;&#66;&copy;&#x110000;">&lt;Go&gt; &quot;now&quot; &apos;please&apos;</a>')
+      });
+
+      const [message] = await (await getMessages("entities@example.com")).json<Array<{ links: EmailLink[] }>>();
+      expect(message.links).toEqual([{ text: "<Go> \"now\" 'please'", href: "https://entities.test/?q=AB&copy;&#x110000;" }]);
+    });
+
+    it("stores no links for a plain-text email", async () => {
+      const { deliverEmail, getMessages } = await setup();
+
+      await deliverEmail({
+        to: "nolinks@example.com",
+        mime: plainTextEmail("nolinks@example.com", "Hi", "Visit https://console.test to continue")
+      });
+
+      const [message] = await (await getMessages("nolinks@example.com")).json<Array<{ links: EmailLink[] }>>();
+      expect(message.links).toEqual([]);
+    });
+
     it("lowercases the recipient so lookups are case-insensitive", async () => {
       const { deliverEmail, getMessages } = await setup();
 
@@ -87,6 +155,15 @@ describe("console-e2e-inbox worker", () => {
       const messages = await (await getMessages("ordered@example.com")).json<Array<{ subject: string; receivedMs: number }>>();
 
       expect(messages.map(message => message.subject)).toEqual(["newer", "older"]);
+    });
+
+    it("returns an empty link list for a message stored before links were kept", async () => {
+      const { getMessages, insertMessageRow } = await setup();
+      await insertMessageRow({ recipient: "legacy@example.com", receivedMs: Date.now() - HOUR_MS });
+
+      const messages = await (await getMessages("legacy@example.com")).json<Array<{ text: string; links: EmailLink[] }>>();
+
+      expect(messages).toEqual([expect.objectContaining({ text: "body", links: [] })]);
     });
 
     it("excludes messages older than 24h from reads even without a new email", async () => {
@@ -152,11 +229,7 @@ describe("console-e2e-inbox worker", () => {
   });
 
   async function setup() {
-    const statements = schema
-      .split(";")
-      .map(statement => statement.trim())
-      .filter(Boolean);
-    await env.DB.batch(statements.map(statement => env.DB.prepare(statement)));
+    await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 
     async function deliverEmail(input: { to: string; mime: string }): Promise<void> {
       const message = Object.assign(mock<ForwardableEmailMessage>({ to: input.to, rawSize: input.mime.length }), {
